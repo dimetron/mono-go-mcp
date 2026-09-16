@@ -125,6 +125,12 @@ func main() {
 		return
 	}
 	if token == "" {
+		// An explicit -info/-stmt request that cannot run is an
+		// error; the default no-flags invocation merely skips the
+		// personal parts.
+		if opts.info || opts.stmt {
+			log.Fatal("no MONO_TOKEN — required for -info/-stmt (set it in the environment or .env)")
+		}
 		fmt.Println("\nno MONO_TOKEN — personal parts skipped (set it in the environment or .env)")
 		exitIfFailed(failed)
 		return
