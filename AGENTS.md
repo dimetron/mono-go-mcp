@@ -12,6 +12,25 @@ v250818, OpenAPI 3.0.3) as MCP tools.
 - MCP SDK: `github.com/modelcontextprotocol/go-sdk` (official Go SDK)
 - Transport: stdio (default). Server name: `mono-go-mcp`.
 
+## CI gate (PR merge)
+
+`.github/workflows/ci.yml` runs on every PR to `main` and on `main`
+pushes. It fails (and thus blocks merge when required on the branch)
+if any of these fail:
+
+- `go vet ./...`
+- `go test ./... -count=1 -coverprofile=coverage.out -covermode=atomic`
+- **Coverage floor: 90%** of total statements. `MIN_COVERAGE` at the
+  top of the workflow holds the number; the "Enforce coverage floor"
+  step parses `go tool cover -func` and fails below it. Keep the floor
+  honest when adding code: total is 95%+ today.
+- `govulncheck` (golang/govulncheck-action@v1, called-vulnerability
+  mode). Any called CVE fails the scan job; keep `go get -u` fresh.
+
+Coverage is also uploaded to Codecov (README badge); the govulncheck
+result is published as a shields.io endpoint JSON on the `gh-pages`
+branch (`badges/vuln-badge.json`) from `main` runs.
+
 ## Commands
 
 Use [Task](https://taskfile.dev/) (`brew install go-task`) — `taskfile.dev` Taskfile.yml is the task runner of record:
@@ -139,6 +158,21 @@ plain API client, not an MCP peer).
   a shared service.
 - Errors: `{"errorDescription": "..."}` with meaningful HTTP status
   (401/403 missing-bad token, 429 rate limit, 404 bad request data).
+
+## Testing MCP tools
+
+When asked to test the MCP tools end-to-end, this is the safe pattern:
+
+- Read-only tools (`mono_currency_rates`, `mono_bank_sync`,
+  `mono_client_info`, `mono_statement`) — test freely.
+- **Never call `mono_set_webhook` to "test" it.** It mutates account
+  state: monobank first validates the URL with a GET, then **overwrites
+  the existing webhook** if valid — a fake/throwaway URL that happens to
+  answer 200 replaces the user's real hook. Only call it when the user
+  explicitly provides a real webhook URL to set. Without one, test it
+  via `go test ./...` / unit coverage instead.
+- Error-path checks for `mono_statement` (oversized range, empty
+  window) are fine — they never change state.
 
 ## Editing rules
 

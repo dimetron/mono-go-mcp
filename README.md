@@ -1,5 +1,10 @@
 # mono-go-mcp
 
+[![ci](https://github.com/dimetron/mono-go-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/dimetron/mono-go-mcp/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/dimetron/mono-go-mcp/graph/badge.svg)](https://codecov.io/gh/dimetron/mono-go-mcp)
+[![govulncheck](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdimetron%2Fmono-go-mcp%2Fgh-pages%2Fbadges%2Fvuln-badge.json)](https://github.com/dimetron/mono-go-mcp/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/dimetron/mono-go-mcp.svg)](https://pkg.go.dev/github.com/dimetron/mono-go-mcp)
+
 [English](#english) | [Українська](#українська)
 
 ## English
@@ -33,6 +38,14 @@ task install   # both into $GOPATH/bin
 task check     # fmt gate + vet + build
 task --list    # all tasks
 ```
+
+### CI / PR merge gate
+
+Every PR runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
+`go vet`, tests with coverage and **govulncheck**. Merge is gated on a
+**90% code-coverage floor** and **zero called vulnerabilities**
+(`MIN_COVERAGE` env at the top of the workflow). Coverage is published
+to Codecov, the vulnerability count as a shields.io endpoint badge.
 
 Or plain go:
 
@@ -195,6 +208,14 @@ task install   # обидва у $GOPATH/bin
 task check     # перевірка форматування + vet + збірка
 task --list    # усі задачі
 ```
+
+### CI / гейт злиття PR
+
+Кожен PR проходить [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
+`go vet`, тести з покриттям та **govulncheck**. Злиття блокується, якщо
+**покриття нижче 90%** або знайдено вразливості, які код викликає
+(`MIN_COVERAGE` на початку workflow). Покриття публікується на Codecov,
+кількість вразливостей — як shields.io бейдж.
 
 Або звичайним go:
 
