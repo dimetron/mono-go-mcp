@@ -1,0 +1,102 @@
+version: '3'
+
+vars:
+  APP: mono-go-mcp
+  VERSION: 0.1.0
+  BIN_DIR: bin
+  BIN: '{{.BIN_DIR}}/{{.APP}}'
+  # Where the binary is installed by `task install`
+  INSTALL_DIR: '{{env "GOPATH" | default (env "HOME") | printf "%s/bin"}}'
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  # === Build ===
+
+  build:
+    desc: Build the server binary into bin/
+    cmds:
+      - go build -trimpath -ldflags "-s -w -X main.version={{.VERSION}}" -o {{.BIN}} ./cmd/mono-go-mcp
+    sources:
+      - cmd/**/*.go
+      - internal/**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - '{{.BIN}}'
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf {{.BIN_DIR}}
+
+  # === Install ===
+
+  install:
+    desc: Build and install the binary into $GOPATH/bin
+    deps: [build]
+    cmds:
+      - mkdir -p {{.INSTALL_DIR}}
+      - cp {{.BIN}} {{.INSTALL_DIR}}/{{.APP}}
+      - echo "Installed {{.INSTALL_DIR}}/{{.APP}}"
+
+  uninstall:
+    desc: Remove the installed binary from $GOPATH/bin
+    cmds:
+      - rm -f {{.INSTALL_DIR}}/{{.APP}}
+      - echo "Removed {{.INSTALL_DIR}}/{{.APP}} (if it existed)"
+
+  release:check:
+    desc: Validate .goreleaser.yaml
+    cmds:
+      - goreleaser check
+
+  release:build:
+    desc: Dry-run release cross-builds into dist/ (all 5 OS/arch targets)
+    cmds:
+      - goreleaser build --snapshot --clean --skip=validate
+    sources:
+      - cmd/**/*.go
+      - internal/**/*.go
+      - go.mod
+      - go.sum
+      - .goreleaser.yaml
+
+  release:clean:
+    desc: Remove goreleaser dist/ output
+    cmds:
+      - rm -rf dist
+
+  # === Quality ===
+
+  check:
+    desc: Format check, vet, and build everything
+    cmds:
+      - gofmt -l . | tee /dev/stderr | (! grep -q .)
+      - go vet ./...
+      - go build ./...
+
+  fmt:
+    desc: Format all Go files
+    cmds:
+      - gofmt -w .
+
+  smoke:
+    desc: Run the in-process MCP smoke test (hits real monobank API)
+    cmds:
+      - go run ./cmd/smoke
+
+  run:
+    desc: Run the MCP server locally (reads .env, needs a terminal with an MCP client)
+    deps: [build]
+    cmds:
+      - '{{.BIN}}'
+
+  upgrade:
+    desc: Update dependencies to latest
+    cmds:
+      - go get -u ./...
+      - go mod tidy
