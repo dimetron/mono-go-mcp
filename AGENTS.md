@@ -26,6 +26,20 @@ if any of these fail:
   honest when adding code: total is 95%+ today.
 - `govulncheck` (golang/govulncheck-action@v1, called-vulnerability
   mode). Any called CVE fails the scan job; keep `go get -u` fresh.
+- **gitleaks** (`.github/workflows/secrets.yml`, gitleaks-action@v2):
+  full-history scan for hardcoded secrets; any finding blocks merge.
+  Locally, the same scan runs as a pre-commit hook (see below), so
+  leaks should never reach a commit in the first place.
+
+### Secret scanning (gitleaks)
+
+Pre-commit hook installed in `.git/hooks/pre-commit`
+(`gitleaks git --pre-commit --redact --staged --verbose`): every local
+commit is scanned against the default gitleaks rules; a finding exits 1
+and rejects the commit with the secret redacted. If a finding is a
+false positive, allowlist it in `.gitleaks.toml` (repo root) rather
+than using `--no-verify`. CI re-runs the scan server-side as a
+backstop.
 
 Coverage is also uploaded to Codecov (README badge); the govulncheck
 result is published as a shields.io endpoint JSON on the `gh-pages`
