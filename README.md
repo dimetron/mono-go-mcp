@@ -28,8 +28,8 @@ All monetary values are integer minimal currency units (kopiykas/cents).
 Uses [Task](https://taskfile.dev/) (`brew install go-task`):
 
 ```sh
-task build     # bin/mono-go-mcp
-task install   # into $GOPATH/bin
+task build     # bin/mono-go-mcp + bin/mono-go-cli
+task install   # both into $GOPATH/bin
 task check     # fmt gate + vet + build
 task --list    # all tasks
 ```
@@ -84,18 +84,35 @@ Optional env: `MONO_BASE_URL` overrides the API base (for tests).
 At startup the server auto-loads `.env` from its working directory
 (missing file is fine; shell env vars win over `.env` values).
 
-### Verify
+### CLI (mono-go-cli)
+
+A terminal client for the same monobank API — no MCP client needed.
+With no flags it prints currency rates, bank sync info and, with
+`MONO_TOKEN`, client info plus **two statement tables** for the default
+account:
+
+- **last month** — from the 1st of the previous month to the 1st of
+  this month;
+- **this month** — from the 1st of this month to now.
 
 ```sh
-task smoke
-# or: go run ./cmd/smoke
+task smoke                       # or: go run ./cmd/mono-go-cli
+mono-go-cli -stmt                # only the statement tables
+mono-go-cli -info -stmt          # client info + statements
+mono-go-cli -stmt -account <ID>  # specific account/jar (default "0")
+mono-go-cli -rates               # only the rates table
+mono-go-cli -sync                # only bank public key + server time
+mono-go-cli -webhook <URL>       # set the statement webhook URL
+mono-go-cli -no-wait             # fail on 429 instead of waiting
+mono-go-cli -version
 ```
 
-Always lists tools and calls the public endpoints. With `MONO_TOKEN`
-(in the environment or `.env`) it also calls `mono_client_info` and
-`mono_statement` for the **last month period** (30 days back → now,
-default account, capped at the API's 31-day window) and prints a
-per-transaction summary. Mind the 60 s rate limit when re-running.
+The two statement windows are separate `/personal/statement` calls, so
+the second one may hit the 60 s rate limit; the CLI then waits
+(`X-Auth-Interval-Expires`, capped at 60 s) and retries once. Use
+`-no-wait` to disable that.
+
+### Verify
 
 ### Docs
 
@@ -120,7 +137,7 @@ git push origin v0.2.0   # triggers the release workflow
 ```
 
 The version is stamped into the binary (`main.version`). Local dry
-run: `task release:build` (cross-builds all 5 targets into `dist/`),
+run: `task release:build` (cross-builds both binaries into `dist/`),
 validate config with `task release:check`.
 
 ## Structure
@@ -128,10 +145,10 @@ validate config with `task release:check`.
 ```
 mono-go-mcp/
 ├── Taskfile.yml         # task runner (taskfile.dev): build, install, check
-├── .goreleaser.yaml     # release config: linux/darwin amd64+arm64, windows amd64
+├── .goreleaser.yaml     # release config: both binaries, linux/darwin amd64+arm64, windows amd64
 ├── .github/workflows/   # release.yml: goreleaser on v* tags
-├── cmd/mono-go-mcp/     # entrypoint: .env → client → tools → stdio
-├── cmd/smoke/           # dev smoke test (in-memory MCP + real API)
+├── cmd/mono-go-mcp/     # MCP server entrypoint: .env → client → tools → stdio
+├── cmd/mono-go-cli/     # terminal client: monoapi calls → tables; part-selecting flags
 ├── docs/                # api.md + api-spec.json
 └── internal/
     ├── monoapi/         # monobank HTTP client (no MCP deps)
@@ -173,8 +190,8 @@ MCP-сервер (Model Context Protocol), який відкриває
 Використовує [Task](https://taskfile.dev/) (`brew install go-task`):
 
 ```sh
-task build     # bin/mono-go-mcp
-task install   # у $GOPATH/bin
+task build     # bin/mono-go-mcp + bin/mono-go-cli
+task install   # обидва у $GOPATH/bin
 task check     # перевірка форматування + vet + збірка
 task --list    # усі задачі
 ```
@@ -231,19 +248,35 @@ export MONO_TOKEN="<ваш токен>"
 каталогу (відсутність файлу — не помилка; змінні середовища оболонки
 мають пріоритет над значеннями з `.env`).
 
-### Перевірка
+### CLI (mono-go-cli)
+
+Термінальний клієнт для того ж API monobank — MCP-клієнт не потрібен.
+Без прапорців виводить курси валют, інформацію про банк і, якщо задано
+`MONO_TOKEN`, дані клієнта та **дві таблиці виписок** для типового
+рахунку:
+
+- **минулий місяць** — з 1-го числа попереднього місяця до 1-го числа
+  поточного;
+- **поточний місяць** — з 1-го числа поточного місяця до зараз.
 
 ```sh
-task smoke
-# або: go run ./cmd/smoke
+task smoke                       # або: go run ./cmd/mono-go-cli
+mono-go-cli -stmt                # лише таблиці виписок
+mono-go-cli -info -stmt          # дані клієнта + виписки
+mono-go-cli -stmt -account <ID>  # конкретний рахунок/банка (типово "0")
+mono-go-cli -rates               # лише таблиця курсів
+mono-go-cli -sync                # лише публічний ключ + час сервера
+mono-go-cli -webhook <URL>       # встановити webhook URL
+mono-go-cli -no-wait             # помилка 429 замість очікування
+mono-go-cli -version
 ```
 
-Завжди показує список інструментів і викликає публічні ендпоінти. Якщо
-задано `MONO_TOKEN` (у середовищі або `.env`), також викликає
-`mono_client_info` і `mono_statement` за **період останнього місяця**
-(30 днів назад → зараз, типовий рахунок, з урахуванням обмеження вікна
-API у 31 день) і виводить підсумок по транзакціях. Пам'ятайте про ліміт
-60 с під час повторних запусків.
+Два вікна виписок — окремі виклики `/personal/statement`, тому другий
+може впертися в ліміт 60 с; тоді CLI чекає
+(`X-Auth-Interval-Expires`, не більше 60 с) і повторює запит. Прапорець
+`-no-wait` вимикає це очікування.
+
+### Перевірка
 
 ### Документація
 
@@ -259,8 +292,10 @@ API у 31 день) і виводить підсумок по транзакці
 ```
 mono-go-mcp/
 ├── Taskfile.yml         # task runner (taskfile.dev): build, install, check
-├── cmd/mono-go-mcp/     # точка входу: .env → клієнт → інструменти → stdio
-├── cmd/smoke/           # розробницький smoke-тест (in-memory MCP + реальний API)
+├── .goreleaser.yaml     # реліз-конфіг: обидва бінарники, linux/darwin amd64+arm64, windows amd64
+├── .github/workflows/   # release.yml: goreleaser на тегах v*
+├── cmd/mono-go-mcp/     # точка входу MCP-сервера: .env → клієнт → інструменти → stdio
+├── cmd/mono-go-cli/     # термінальний клієнт: виклики monoapi → таблиці; прапорці вибору частин
 ├── docs/                # api.md + api-spec.json
 └── internal/
     ├── monoapi/         # HTTP-клієнт monobank (без залежностей від MCP)
