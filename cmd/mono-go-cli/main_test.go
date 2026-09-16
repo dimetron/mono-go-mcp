@@ -195,7 +195,7 @@ func TestFetchStatementRetriesAfter429(t *testing.T) {
 	})
 	from := time.Now().Add(-2 * time.Hour)
 	to := time.Now()
-	items, err := fetchStatement(t.Context(), monoapi.NewClient("tok", base), "0", from, to, false)
+	items, err := fetchStatement(t.Context(), monoapi.NewClient("tok", base), "0", from, to, false, false)
 	if err != nil {
 		t.Fatalf("fetchStatement: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestFetchStatementNoWait(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	})
 	_, err := fetchStatement(t.Context(), monoapi.NewClient("tok", base), "0",
-		time.Now().Add(-time.Hour), time.Now(), true)
+		time.Now().Add(-time.Hour), time.Now(), true, false)
 	if err == nil {
 		t.Fatal("want 429 error with -no-wait, got nil")
 	}
@@ -308,14 +308,19 @@ func TestHoldMark(t *testing.T) {
 func TestPrintTables(t *testing.T) {
 	// Smoke: render all table shapes without crashing; alignment
 	// correctness is covered by printRow alignment rules below.
-	printRates([]monoapi.CurrencyPair{{CurrencyCodeA: 840, CurrencyCodeB: 980, RateSell: 1.5, Date: 1700000000}})
-	printBankSync(&monoapi.SyncInfo{ServerKeyId: "k", ServerPubKey: "p", ServerTimeMsec: 1})
-	printClientInfo(&monoapi.ClientInfo{Name: "n", ClientID: "id", Accounts: []monoapi.Account{{ID: "a", Type: "black", CurrencyCode: 980, Balance: 100}}, Jars: []monoapi.Jar{{ID: "j", Title: "jar", CurrencyCode: 980, Balance: 2}}})
+	printRates([]monoapi.CurrencyPair{{CurrencyCodeA: 840, CurrencyCodeB: 980, RateSell: 1.5, Date: 1700000000}}, false)
+	printBankSync(&monoapi.SyncInfo{ServerKeyId: "k", ServerPubKey: "p", ServerTimeMsec: 1}, false)
+	printClientInfo(&monoapi.ClientInfo{Name: "n", ClientID: "id", Accounts: []monoapi.Account{{ID: "a", Type: "black", CurrencyCode: 980, Balance: 100}}, Jars: []monoapi.Jar{{ID: "j", Title: "jar", CurrencyCode: 980, Balance: 2}}}, false)
 	printStatement("win", time.Unix(100, 0), time.Unix(200, 0), monoapi.StatementItems{
 		{Time: 150, Amount: 500, Description: "d", Hold: true, CurrencyCode: 980},
-	})
+	}, false)
 	// Empty statement prints the no-transactions branch.
-	printStatement("empty", time.Unix(100, 0), time.Unix(200, 0), nil)
+	printStatement("empty", time.Unix(100, 0), time.Unix(200, 0), nil, false)
+	// -json shapes: smoke-render each printer's JSON branch too.
+	printRates(nil, true)
+	printBankSync(&monoapi.SyncInfo{ServerKeyId: "k"}, true)
+	printClientInfo(&monoapi.ClientInfo{Name: "n"}, true)
+	printStatement("json", time.Unix(100, 0), time.Unix(200, 0), nil, true)
 }
 
 func TestPrintRowAlignment(t *testing.T) {

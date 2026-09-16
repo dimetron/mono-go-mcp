@@ -21,6 +21,10 @@ mono-go-cli -stmt                 # two statement tables for the default account
 mono-go-cli -stmt -account <ID>   # specific account/jar (ID from -info; "0" = default)
 mono-go-cli -webhook <URL>        # set the statement webhook URL (POST /personal/webhook)
 mono-go-cli -no-wait              # fail on 429 instead of waiting out the rate limit
+mono-go-cli -json                 # machine-readable: each part as JSON Lines —
+                                  #   rates: array of pairs; sync: SyncInfo object;
+                                  #   info: ClientInfo object; stmt: {"label","from","to","items"}
+                                  #   per window. Combine: -stmt -json, -rates -sync -json, …
 mono-go-cli -version
 ```
 
@@ -36,6 +40,11 @@ binaries into `$(go env GOPATH)/bin`).
   divide displayed amounts again. Raw integer kopiykas appear only in
   the MCP tools' JSON output (`mono_statement`, `mono_client_info`);
   divide those by 100 for UAH.
+- **Present results with emoji tables**, not raw CLI dumps: wrap
+  fetched data in a box-drawing table (┌─┬─┐ rails, one row per item)
+  with an emoji per state (✅ pass, ❌ fail, 💰 money in, 💸 money out,
+  💳 card/account, 🏺 jar). Use `-json` for machine-readable data, then
+  render the emoji table for the user.
 - `/personal/*` endpoints (`-info`, `-stmt`) are rate-limited to **1 per
   60 s**. The two statement windows are separate calls; the CLI waits
   (`X-Auth-Interval-Expires`, capped at 60 s) and retries once. Don't
