@@ -92,7 +92,7 @@ jobs:
       - name: Summarize vulnerabilities (badge data)
         run: |
           python3 - <<'PY'
-          import json
+          import json, os
           dec = json.JSONDecoder()
           s = open('vuln.json').read().strip()
           idx = 0
@@ -112,12 +112,15 @@ jobs:
               idx = end
           n = len(vulns)
           status = 'passing' if n == 0 else 'failing'
+          # publish_dir must be a directory (peaceiris/actions-gh-pages
+          # scandir's it); a bare file fails with ENOTDIR.
+          os.makedirs('badges', exist_ok=True)
           payload = {"schemaVersion": 1,
                      "label": "govulncheck",
                      "message": f"{n} vulns" if n else "0 vulns",
                      "color": "brightgreen" if n == 0 else "red",
                      "namedLogos": "go"}
-          open('vuln-badge.json', 'w').write(json.dumps(payload))
+          open('badges/vuln-badge.json', 'w').write(json.dumps(payload))
           print(f"govulncheck: {n} called vulnerabilities -> {status}")
           PY
 
@@ -126,7 +129,7 @@ jobs:
         uses: peaceiris/actions-gh-pages@329bcc8f12caed2cefe5a5b80781499a6f3b361b # v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./vuln-badge.json
+          publish_dir: ./badges
           keep_files: false
           destination_dir: badges
           publish_branch: gh-pages
