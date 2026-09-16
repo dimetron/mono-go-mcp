@@ -36,7 +36,9 @@ func main() {
 // main so tests can exercise it with an in-memory transport instead.
 func run(ctx context.Context, args []string) error {
 	if err := loadDotEnv(".env"); err != nil {
-		log.Printf("warning: %v", err)
+		// Generic message on purpose: godotenv errors embed file
+		// content, which may itself contain secrets. Never log it.
+		log.Print("warning: could not parse .env — continuing with the environment only")
 	}
 	return newServer().Run(ctx, transportFor(args))
 }

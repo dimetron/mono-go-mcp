@@ -211,7 +211,11 @@ func fetchStatement(ctx context.Context, client *monoapi.Client, account string,
 			wait = maxWait
 		}
 		fmt.Printf("\nrate limited; waiting %ds for the 60 s window to reset…\n", wait)
-		time.Sleep(time.Duration(wait) * time.Second)
+		select {
+		case <-time.After(time.Duration(wait) * time.Second):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 		items, err = client.GetStatement(ctx, account, from.Unix(), to.Unix())
 	}
 	if err != nil {

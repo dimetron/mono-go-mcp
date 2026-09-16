@@ -15,6 +15,9 @@ builds:
     binary: mono-go-mcp
     env:
       - CGO_ENABLED=0
+    flags:
+      - -trimpath # reproducible builds: no local paths in binaries
+    mod_timestamp: "{{ .CommitTimestamp }}"
     goos:
       - linux
       - darwin
@@ -32,6 +35,9 @@ builds:
     binary: mono-go-cli
     env:
       - CGO_ENABLED=0
+    flags:
+      - -trimpath # reproducible builds: no local paths in binaries
+    mod_timestamp: "{{ .CommitTimestamp }}"
     goos:
       - linux
       - darwin

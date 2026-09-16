@@ -52,7 +52,10 @@ func NewClient(token, baseURL string) *Client {
 
 // APIError describes a non-2xx monobank response. Monobank returns
 // {"errorDescription": "..."} bodies; the HTTP status code is what
-// should be analyzed programmatically.
+// should be analyzed programmatically. Error text is sanitized: the
+// raw body is truncated and control characters stripped, so an
+// upstream response can neither leak unbounded content nor inject
+// terminal escape sequences into CLI logs.
 type APIError struct {
 	StatusCode        int
 	Status            string
@@ -110,16 +113,19 @@ func (c *Client) do(ctx context.Context, method, endpoint string, body, out any)
 	}
 	defer resp.Body.Close()
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20+1))
 	if err != nil {
 		return err
+	}
+	if len(data) > 10<<20 {
+		return fmt.Errorf("%s %s: response body exceeds 10 MiB limit", method, endpoint)
 	}
 	if resp.StatusCode >= 300 {
 		apiErr := &APIError{
 			StatusCode: resp.StatusCode,
 			Status:     resp.Status,
 			Endpoint:   endpoint,
-			Body:       strings.TrimSpace(string(data)),
+			Body:       sanitizeBody(string(data)),
 		}
 		if s := resp.Header.Get("X-Auth-Interval-Expires"); s != "" {
 			if n := atoi(s); n > 0 {
@@ -146,4 +152,23 @@ func atoi(s string) int {
 		n = n*10 + int(r-'0')
 	}
 	return n
+}
+
+// sanitizeBody bounds and cleans an upstream response body before it
+// becomes error text: control characters (which could inject terminal
+// escape sequences into CLI logs) are dropped and the result is capped
+// at 1 KiB — enough for monobank's {"errorDescription": "..."} JSON.
+func sanitizeBody(s string) string {
+	clean := strings.Map(func(r rune) rune {
+		if r < 0x20 && r != '\n' && r != '\t' || r == 0x7f {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(s))
+	const max = 1024
+	r := []rune(clean)
+	if len(r) > max {
+		r = append(r[:max], []rune("…")...)
+	}
+	return string(r)
 }
