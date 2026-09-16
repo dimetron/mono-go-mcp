@@ -90,6 +90,13 @@ tasks:
     cmds:
       - gofmt -w .
 
+  cve-scan:
+    desc: CVE scan — govulncheck (source deps) + grype (bin/ binaries)
+    deps: [build]
+    cmds:
+      - govulncheck ./...
+      - grype dir:{{.BIN_DIR}} --fail-on high
+
   smoke:
     desc: Run the CLI against the real monobank API (default output; with MONO_TOKEN also statements)
     aliases: [cli]

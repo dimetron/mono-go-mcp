@@ -53,6 +53,7 @@ Use [Task](https://taskfile.dev/) (`brew install go-task`) — `taskfile.dev` Ta
 task build     # → bin/mono-go-mcp + bin/mono-go-cli (incremental via sources/generates)
 task install   # build + copy both into $GOPATH/bin
 task check     # gofmt -l gate, go vet, go build ./...
+task cve-scan  # govulncheck ./... + grype dir:bin --fail-on high (builds first)
 task fmt       # gofmt -w .
 task smoke       # run the CLI (cmd/mono-go-cli) against the real API; alias: task cli
 task run         # run the server locally (reads .env)
