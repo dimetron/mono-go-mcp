@@ -174,6 +174,29 @@ When asked to test the MCP tools end-to-end, this is the safe pattern:
 - Error-path checks for `mono_statement` (oversized range, empty
   window) are fine — they never change state.
 
+## Personal data policy (hard rule)
+
+monobank personal endpoints return real personal data: client name,
+client ID, account/jar IDs and balances, IBANs, masked PANs, merchant
+names, phone numbers in payment descriptions, full transaction
+histories. **None of it may leave the user's machine.**
+
+- Never print, echo, quote, summarize-with-identifiers, or paste
+  personal data into commits, PR text, issues, chat replies, logs, or
+  test fixtures — even when a tool call returns it, even "just an
+  example". Redact or replace it with placeholders (`acc1`, `client-1`)
+  before anything is written anywhere persistent.
+- Never write real balances, names, IBANs, PANs, transaction
+  descriptions or client IDs into tests, docs, README examples or
+  screenshots. Synthetic data only.
+- `git log`, PR bodies and CI logs are public forever: grep diffs and
+  commit messages for leaked values before pushing.
+- The repo `.env` holds a real token — never print it, never commit
+  it, and never include its contents in anything.
+- If personal data has already been written somewhere (commit, issue,
+  logs), tell the user immediately: commits may need a force-push
+  rewrite, tokens should be rotated.
+
 ## Editing rules
 
 - Change one thing per change; keep the monoapi/tools split clean.
