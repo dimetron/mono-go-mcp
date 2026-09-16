@@ -17,16 +17,16 @@ v250818, OpenAPI 3.0.3) as MCP tools.
 Use [Task](https://taskfile.dev/) (`brew install go-task`) — `taskfile.dev` Taskfile.yml is the task runner of record:
 
 ```sh
-task build     # → bin/mono-go-mcp (incremental via sources/generates)
-task install   # build + copy into $GOPATH/bin
+task build     # → bin/mono-go-mcp + bin/mono-go-cli (incremental via sources/generates)
+task install   # build + copy both into $GOPATH/bin
 task check     # gofmt -l gate, go vet, go build ./...
 task fmt       # gofmt -w .
-task smoke       # MCP smoke test; with MONO_TOKEN also last-month statement
+task smoke       # run the CLI (cmd/mono-go-cli) against the real API; alias: task cli
 task run         # run the server locally (reads .env)
 task clean       # rm -rf bin/
 task upgrade     # go get -u ./... && go mod tidy
 task release:check  # goreleaser check (.goreleaser.yaml validation)
-task release:build  # cross-build all 5 targets into dist/ (dry run)
+task release:build  # cross-build all targets into dist/ (dry run)
 task release:clean  # rm -rf dist/
 ```
 
@@ -35,12 +35,24 @@ Raw go equivalents (when task is unavailable):
 ```sh
 go build ./...        # build all packages
 go vet ./...          # static checks
-go run ./cmd/smoke    # in-process MCP smoke test (public + personal w/ token)
+go run ./cmd/mono-go-cli    # CLI: rates, sync, client info, two statement tables
 go build -o bin/mono-go-mcp ./cmd/mono-go-mcp   # build the server binary
+go build -o bin/mono-go-cli ./cmd/mono-go-cli   # build the CLI binary
 gofmt -w .            # format (run before committing)
 ```
 
-There are no `*_test.go` files yet; `go test ./...` passes trivially.
+There is one test file (`internal/monoapi/cache_test.go`); `go test ./...`
+runs it.
+
+## cmd/mono-go-cli (terminal client)
+
+Direct client for the monoapi layer — no MCP involved. Default output:
+rates table, bank-sync table, and with `MONO_TOKEN` client-info plus
+two statement tables (1st of last month → 1st of this month, 1st of
+this month → now). Flags select parts: `-rates`, `-sync`, `-info`,
+`-stmt`, `-account ID`, `-webhook URL`, `-no-wait`, `-version`. With no
+flags everything runs. On a 429 from the second statement call it
+waits `X-Auth-Interval-Expires` (capped at 60 s) and retries once.
 
 ## Project structure
 
@@ -56,8 +68,8 @@ mono-go-mcp/
 ├── bin/                    # build output (git-ignored)
 ├── cmd/
 │   ├── mono-go-mcp/        # server entrypoint: .env -> client -> tools -> stdio
-│   └── smoke/              # dev smoke test: in-memory MCP client + real API
-├── .goreleaser.yaml        # release config: 5 targets (linux/darwin amd64+arm64, windows amd64)
+│   └── mono-go-cli/        # terminal client: monoapi calls + table output + flags
+├── .goreleaser.yaml        # release config: both binaries, 5 OS/arch targets
 ├── .github/workflows/
 │   └── release.yml         # GitHub Actions: goreleaser on v* tags
 └── internal/
@@ -65,14 +77,17 @@ mono-go-mcp/
     │   ├── client.go       # Client, APIError (429/403 handling), X-Token header
     │   ├── endpoints.go    # one method per API endpoint
     │   ├── types.go        # request/response types mirroring OpenAPI schemas
+    │   ├── cache.go        # 65 s TTL cache for rate-limited /personal/* responses
     │   └── util.go         # small helpers
     └── tools/              # MCP tool layer
         └── tools.go        # Register(): one tool per endpoint, SDK ToolHandlerFor
 ```
 
-Dependency direction: `cmd/smoke` and `cmd/mono-go-mcp` →
+Dependency direction: `cmd/mono-go-cli` and `cmd/mono-go-mcp` →
 `internal/tools` → `internal/monoapi`. The `monoapi` package must stay
-MCP-free; the `tools` package must stay HTTP-free.
+MCP-free; the `tools` package must stay HTTP-free. `cmd/mono-go-cli`
+skips `internal/tools` and calls `internal/monoapi` directly (it is a
+plain API client, not an MCP peer).
 
 ## Environment
 
@@ -143,8 +158,9 @@ GitHub Actions (`.github/workflows/release.yml`):
 
 - Trigger: push a tag `v*` (e.g. `git tag v0.2.0 && git push origin v0.2.0`),
   or run the workflow manually (`workflow_dispatch`).
-- Targets: linux amd64+arm64, darwin amd64+arm64, windows amd64
-  (tar.gz archives; zip for Windows; `checksums.txt`).
+- Targets: both binaries (mono-go-mcp, mono-go-cli) for linux
+  amd64+arm64, darwin amd64+arm64, windows amd64 (tar.gz archives; zip
+  for Windows; `checksums.txt`).
 - Version is stamped into the binary via
   `-X main.version={{ .Version }}` (see `var version` in
   `cmd/mono-go-mcp/main.go` — keep it a `var` or the stamp silently

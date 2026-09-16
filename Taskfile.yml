@@ -2,11 +2,14 @@ version: '3'
 
 vars:
   APP: mono-go-mcp
+  CLI: mono-go-cli
   VERSION: 0.1.0
   BIN_DIR: bin
   BIN: '{{.BIN_DIR}}/{{.APP}}'
-  # Where the binary is installed by `task install`
-  INSTALL_DIR: '{{env "GOPATH" | default (env "HOME") | printf "%s/bin"}}'
+  CLI_BIN: '{{.BIN_DIR}}/{{.CLI}}'
+  # Where the binaries are installed by `task install` ($HOME/go/bin by
+  # default; shell-expanded at command time, so a custom GOPATH wins).
+  INSTALL_DIR: '$(go env GOPATH)/bin'
 
 tasks:
   default:
@@ -17,9 +20,10 @@ tasks:
   # === Build ===
 
   build:
-    desc: Build the server binary into bin/
+    desc: Build the server and CLI binaries into bin/
     cmds:
       - go build -trimpath -ldflags "-s -w -X main.version={{.VERSION}}" -o {{.BIN}} ./cmd/mono-go-mcp
+      - go build -trimpath -ldflags "-s -w" -o {{.CLI_BIN}} ./cmd/mono-go-cli
     sources:
       - cmd/**/*.go
       - internal/**/*.go
@@ -27,6 +31,7 @@ tasks:
       - go.sum
     generates:
       - '{{.BIN}}'
+      - '{{.CLI_BIN}}'
 
   clean:
     desc: Remove build artifacts
@@ -36,18 +41,19 @@ tasks:
   # === Install ===
 
   install:
-    desc: Build and install the binary into $GOPATH/bin
+    desc: Build and install both binaries into $GOPATH/bin
     deps: [build]
     cmds:
       - mkdir -p {{.INSTALL_DIR}}
       - cp {{.BIN}} {{.INSTALL_DIR}}/{{.APP}}
-      - echo "Installed {{.INSTALL_DIR}}/{{.APP}}"
+      - cp {{.CLI_BIN}} {{.INSTALL_DIR}}/{{.CLI}}
+      - echo "Installed {{.INSTALL_DIR}}/{{.APP}} and {{.INSTALL_DIR}}/{{.CLI}}"
 
   uninstall:
-    desc: Remove the installed binary from $GOPATH/bin
+    desc: Remove the installed binaries from $GOPATH/bin
     cmds:
-      - rm -f {{.INSTALL_DIR}}/{{.APP}}
-      - echo "Removed {{.INSTALL_DIR}}/{{.APP}} (if it existed)"
+      - rm -f {{.INSTALL_DIR}}/{{.APP}} {{.INSTALL_DIR}}/{{.CLI}}
+      - echo "Removed {{.INSTALL_DIR}}/{{.APP}} and {{.INSTALL_DIR}}/{{.CLI}} (if they existed)"
 
   release:check:
     desc: Validate .goreleaser.yaml
@@ -85,9 +91,10 @@ tasks:
       - gofmt -w .
 
   smoke:
-    desc: Run the in-process MCP smoke test (hits real monobank API)
+    desc: Run the CLI against the real monobank API (default output; with MONO_TOKEN also statements)
+    aliases: [cli]
     cmds:
-      - go run ./cmd/smoke
+      - go run ./cmd/mono-go-cli
 
   run:
     desc: Run the MCP server locally (reads .env, needs a terminal with an MCP client)
