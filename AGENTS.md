@@ -12,6 +12,39 @@ v250818, OpenAPI 3.0.3) as MCP tools.
 - MCP SDK: `github.com/modelcontextprotocol/go-sdk` (official Go SDK)
 - Transport: stdio (default). Server name: `mono-go-mcp`.
 
+## CI gate (PR merge)
+
+`.github/workflows/ci.yml` runs on every PR to `main` and on `main`
+pushes. It fails (and thus blocks merge when required on the branch)
+if any of these fail:
+
+- `go vet ./...`
+- `go test ./... -count=1 -coverprofile=coverage.out -covermode=atomic`
+- **Coverage floor: 90%** of total statements. `MIN_COVERAGE` at the
+  top of the workflow holds the number; the "Enforce coverage floor"
+  step parses `go tool cover -func` and fails below it. Keep the floor
+  honest when adding code: total is 95%+ today.
+- `govulncheck` (golang/govulncheck-action@v1, called-vulnerability
+  mode). Any called CVE fails the scan job; keep `go get -u` fresh.
+- **gitleaks** (`.github/workflows/secrets.yml`, gitleaks-action@v2):
+  full-history scan for hardcoded secrets; any finding blocks merge.
+  Locally, the same scan runs as a pre-commit hook (see below), so
+  leaks should never reach a commit in the first place.
+
+### Secret scanning (gitleaks)
+
+Pre-commit hook installed in `.git/hooks/pre-commit`
+(`gitleaks git --pre-commit --redact --staged --verbose`): every local
+commit is scanned against the default gitleaks rules; a finding exits 1
+and rejects the commit with the secret redacted. If a finding is a
+false positive, allowlist it in `.gitleaks.toml` (repo root) rather
+than using `--no-verify`. CI re-runs the scan server-side as a
+backstop.
+
+Coverage is also uploaded to Codecov (README badge); the govulncheck
+result is published as a shields.io endpoint JSON on the `gh-pages`
+branch (`badges/vuln-badge.json`) from `main` runs.
+
 ## Commands
 
 Use [Task](https://taskfile.dev/) (`brew install go-task`) — `taskfile.dev` Taskfile.yml is the task runner of record:
@@ -139,6 +172,44 @@ plain API client, not an MCP peer).
   a shared service.
 - Errors: `{"errorDescription": "..."}` with meaningful HTTP status
   (401/403 missing-bad token, 429 rate limit, 404 bad request data).
+
+## Testing MCP tools
+
+When asked to test the MCP tools end-to-end, this is the safe pattern:
+
+- Read-only tools (`mono_currency_rates`, `mono_bank_sync`,
+  `mono_client_info`, `mono_statement`) — test freely.
+- **Never call `mono_set_webhook` to "test" it.** It mutates account
+  state: monobank first validates the URL with a GET, then **overwrites
+  the existing webhook** if valid — a fake/throwaway URL that happens to
+  answer 200 replaces the user's real hook. Only call it when the user
+  explicitly provides a real webhook URL to set. Without one, test it
+  via `go test ./...` / unit coverage instead.
+- Error-path checks for `mono_statement` (oversized range, empty
+  window) are fine — they never change state.
+
+## Personal data policy (hard rule)
+
+monobank personal endpoints return real personal data: client name,
+client ID, account/jar IDs and balances, IBANs, masked PANs, merchant
+names, phone numbers in payment descriptions, full transaction
+histories. **None of it may leave the user's machine.**
+
+- Never print, echo, quote, summarize-with-identifiers, or paste
+  personal data into commits, PR text, issues, chat replies, logs, or
+  test fixtures — even when a tool call returns it, even "just an
+  example". Redact or replace it with placeholders (`acc1`, `client-1`)
+  before anything is written anywhere persistent.
+- Never write real balances, names, IBANs, PANs, transaction
+  descriptions or client IDs into tests, docs, README examples or
+  screenshots. Synthetic data only.
+- `git log`, PR bodies and CI logs are public forever: grep diffs and
+  commit messages for leaked values before pushing.
+- The repo `.env` holds a real token — never print it, never commit
+  it, and never include its contents in anything.
+- If personal data has already been written somewhere (commit, issue,
+  logs), tell the user immediately: commits may need a force-push
+  rewrite, tokens should be rotated.
 
 ## Editing rules
 

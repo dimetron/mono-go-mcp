@@ -38,7 +38,10 @@ import (
 	"github.com/joho/godotenv"
 )
 
-const version = "0.1.0"
+// version is stamped at build time via -X main.version (goreleaser and
+// the Taskfile CLI build); keep it a var or the stamp silently stops
+// working.
+var version = "0.1.0"
 
 // options holds the selected CLI parts and modifiers.
 type options struct {
@@ -52,21 +55,33 @@ type options struct {
 }
 
 func main() {
+	os.Exit(run(os.Args[1:]))
+}
+
+// run parses args, executes the selected parts against the monobank API
+// and returns the process exit code (0 success, 1 any selected part
+// failed). Fatal conditions (bad webhook setup, statement fetch error)
+// terminate via log.Fatal* inside this function.
+func run(args []string) int {
 	opts := options{account: "0"}
 	var showVersion bool
-	flag.BoolVar(&opts.rates, "rates", false, "show currency rates table")
-	flag.BoolVar(&opts.sync, "sync", false, "show bank public key + server time table")
-	flag.BoolVar(&opts.info, "info", false, "show client info table (needs MONO_TOKEN)")
-	flag.BoolVar(&opts.stmt, "stmt", false, "show statement tables for last month and this month (needs MONO_TOKEN)")
-	flag.StringVar(&opts.account, "account", "0", "statement account: \"0\" for default, or an account/jar ID from client info")
-	flag.StringVar(&opts.webhook, "webhook", "", "set the webhook URL that receives statement events (POST /personal/webhook)")
-	flag.BoolVar(&opts.noWait, "no-wait", false, "do not wait out the 60 s personal-endpoint rate limit; fail with 429 instead")
-	flag.BoolVar(&showVersion, "version", false, "print version and exit")
-	flag.Parse()
+	fs := flag.NewFlagSet("mono-go-cli", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.BoolVar(&opts.rates, "rates", false, "show currency rates table")
+	fs.BoolVar(&opts.sync, "sync", false, "show bank public key + server time table")
+	fs.BoolVar(&opts.info, "info", false, "show client info table (needs MONO_TOKEN)")
+	fs.BoolVar(&opts.stmt, "stmt", false, "show statement tables for last month and this month (needs MONO_TOKEN)")
+	fs.StringVar(&opts.account, "account", "0", "statement account: \"0\" for default, or an account/jar ID from client info")
+	fs.StringVar(&opts.webhook, "webhook", "", "set the webhook URL that receives statement events (POST /personal/webhook)")
+	fs.BoolVar(&opts.noWait, "no-wait", false, "do not wait out the 60 s personal-endpoint rate limit; fail with 429 instead")
+	fs.BoolVar(&showVersion, "version", false, "print version and exit")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 
 	if showVersion {
 		fmt.Println("mono-go-cli", version)
-		return
+		return 0
 	}
 
 	// No part selected: run everything.
@@ -80,16 +95,22 @@ func main() {
 	client := monoapi.NewClient(token, os.Getenv("MONO_BASE_URL"))
 	ctx := context.Background()
 
+	// failed counts the selected parts that could not be fetched;
+	// main exits nonzero if any of them failed.
+	failed := 0
+
 	if opts.webhook != "" {
 		if token == "" {
-			log.Fatal("-webhook requires MONO_TOKEN")
+			log.Print("-webhook requires MONO_TOKEN")
+			return 1
 		}
 		if err := client.SetWebHook(ctx, opts.webhook); err != nil {
-			log.Fatalf("set webhook: %v", err)
+			log.Printf("set webhook: %v", err)
+			return 1
 		}
 		fmt.Printf("webhook set: %s\n", opts.webhook)
 		if !opts.rates && !opts.sync && !opts.info && !opts.stmt {
-			return
+			return 0
 		}
 	}
 
@@ -97,6 +118,7 @@ func main() {
 		pairs, err := client.GetCurrencyRates(ctx)
 		if err != nil {
 			log.Printf("currency rates: %v", err)
+			failed++
 		} else {
 			printRates(pairs)
 		}
@@ -106,49 +128,82 @@ func main() {
 		si, err := client.GetBankSync(ctx)
 		if err != nil {
 			log.Printf("bank sync: %v", err)
+			failed++
 		} else {
 			printBankSync(si)
 		}
 	}
 
 	if !opts.info && !opts.stmt {
-		return
+		return exitIfFailed(failed)
 	}
 	if token == "" {
+		// An explicit -info/-stmt request that cannot run is an
+		// error; the default no-flags invocation merely skips the
+		// personal parts.
+		if opts.info || opts.stmt {
+			log.Print("no MONO_TOKEN — required for -info/-stmt (set it in the environment or .env)")
+			return 1
+		}
 		fmt.Println("\nno MONO_TOKEN — personal parts skipped (set it in the environment or .env)")
-		return
+		return exitIfFailed(failed)
 	}
 
 	if opts.info {
 		ci, err := client.GetClientInfo(ctx)
 		if err != nil {
 			log.Printf("client info: %v", err)
+			failed++
 		} else {
 			printClientInfo(ci)
 		}
 	}
 
 	if opts.stmt {
-		now := time.Now()
+		// All UTC: statement timestamps are Unix seconds,
+		// timezone-independent. Mixing local calendar fields with a UTC
+		// location can invert the window in the first hours of the 1st
+		// (now < firstOfThisMonth), hence Now().UTC() for both.
+		now := time.Now().UTC()
 		// Last month: 1st of the previous month .. 1st of this month.
-		// This month: 1st of this month .. now. Both UTC: statement
-		// timestamps are Unix seconds, timezone-independent. Month
-		// windows are at most 31 days, within the API's 2,682,000 s
-		// limit, so no cap is needed.
+		// This month: 1st of this month .. now. Month windows are at
+		// most 31 days, within the API's 2,682,000 s limit, so no cap
+		// is needed.
 		firstOfThisMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 		firstOfLastMonth := firstOfThisMonth.AddDate(0, -1, 0)
 
-		lastMonth := fetchStatement(ctx, client, opts.account, firstOfLastMonth, firstOfThisMonth, opts.noWait)
+		lastMonth, err := fetchStatement(ctx, client, opts.account, firstOfLastMonth, firstOfThisMonth, opts.noWait)
+		if err != nil {
+			log.Printf("statement: %v", err)
+			return 1
+		}
 		printStatement("last month", firstOfLastMonth, firstOfThisMonth, lastMonth)
 
-		thisMonth := fetchStatement(ctx, client, opts.account, firstOfThisMonth, now, opts.noWait)
+		thisMonth, err := fetchStatement(ctx, client, opts.account, firstOfThisMonth, now, opts.noWait)
+		if err != nil {
+			log.Printf("statement: %v", err)
+			return 1
+		}
 		printStatement("this month", firstOfThisMonth, now, thisMonth)
 	}
+
+	return exitIfFailed(failed)
+}
+
+// exitIfFailed returns the process exit code: nonzero when some
+// selected parts failed to be fetched. Statement fetches abort earlier
+// via the error path, so reaching this point means every attempted
+// part either printed or was counted in failed.
+func exitIfFailed(failed int) int {
+	if failed > 0 {
+		return 1
+	}
+	return 0
 }
 
 // fetchStatement calls GetStatement, waiting out the 60 s rate limit
 // once if the API answers 429 (unless noWait).
-func fetchStatement(ctx context.Context, client *monoapi.Client, account string, from, to time.Time, noWait bool) monoapi.StatementItems {
+func fetchStatement(ctx context.Context, client *monoapi.Client, account string, from, to time.Time, noWait bool) (monoapi.StatementItems, error) {
 	items, err := client.GetStatement(ctx, account, from.Unix(), to.Unix())
 	if isRateLimited(err) && !noWait {
 		wait, maxWait := rateLimitReset(err), int(time.Minute.Seconds())
@@ -156,13 +211,17 @@ func fetchStatement(ctx context.Context, client *monoapi.Client, account string,
 			wait = maxWait
 		}
 		fmt.Printf("\nrate limited; waiting %ds for the 60 s window to reset…\n", wait)
-		time.Sleep(time.Duration(wait) * time.Second)
+		select {
+		case <-time.After(time.Duration(wait) * time.Second):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 		items, err = client.GetStatement(ctx, account, from.Unix(), to.Unix())
 	}
 	if err != nil {
-		log.Fatalf("statement %s..%s: %v", from.Format(time.DateOnly), to.Format(time.DateOnly), err)
+		return nil, err
 	}
-	return items
+	return items, nil
 }
 
 // isRateLimited reports whether err is a monobank 429.
@@ -193,7 +252,7 @@ func printRates(pairs []monoapi.CurrencyPair) {
 			time.Unix(p.Date, 0).Format("2006-01-02 15:04"),
 		})
 	}
-	printTable([]string{"pair", "sell", "buy", "cross", "updated"}, rows)
+	printTable([]string{"pair", "sell", "buy", "cross", "updated"}, rows, []int{1, 2, 3})
 }
 
 // rateCell returns the printable cell for a rate: fixed precision or
@@ -234,7 +293,7 @@ func printClientInfo(ci *monoapi.ClientInfo) {
 			"jar", j.ID, j.Title, sym(j.CurrencyCode), fmtMoney(j.Balance),
 		})
 	}
-	printTable([]string{"kind", "id", "name", "cur", "balance"}, rows)
+	printTable([]string{"kind", "id", "name", "cur", "balance"}, rows, []int{4})
 }
 
 // printStatement prints one statement window as a transaction table
@@ -261,7 +320,7 @@ func printStatement(label string, from, to time.Time, items monoapi.StatementIte
 			out += -it.Amount
 		}
 	}
-	printTable([]string{"time", "amount", "description", "hold"}, rows)
+	printTable([]string{"time", "amount", "description", "hold"}, rows, []int{1})
 	fmt.Printf("  totals: %d transactions, in %s %s, out %s %s\n",
 		len(items), fmtMoney(in), sym(items[0].CurrencyCode),
 		fmtMoney(out), sym(items[0].CurrencyCode))
@@ -292,10 +351,12 @@ func fmtMoney(v int64) string {
 
 // printTable renders headers and rows as an aligned text table with
 // box-drawing borders and | separators between all cells. rightAlign
-// marks the indexes of right-aligned (numeric) columns; amounts and
-// balances should be right-aligned, text columns left-aligned.
-func printTable(headers []string, rows [][]string) {
-	printTableAlign(headers, rows, []int{1})
+// marks the indexes of right-aligned (numeric) columns; amounts,
+// balances and rates should be right-aligned, text columns
+// left-aligned. Every caller passes its own set: there is no
+// one-size-fits-all numeric column.
+func printTable(headers []string, rows [][]string, rightAlign []int) {
+	printTableAlign(headers, rows, rightAlign)
 }
 
 // printTableAlign is printTable with a custom set of right-aligned

@@ -25,10 +25,39 @@ const serverVersion = "0.1.0"
 var version = serverVersion
 
 func main() {
-	if err := loadDotEnv(".env"); err != nil {
-		log.Printf("warning: %v", err)
+	log.SetFlags(0) // plain log lines; MCP stderr stays readable
+	if err := run(context.Background(), os.Args); err != nil {
+		log.Fatal(err)
 	}
+}
 
+// run loads the .env, builds the server and serves MCP over the
+// transport chosen by args ("stdio" or absent: stdio). Split out of
+// main so tests can exercise it with an in-memory transport instead.
+func run(ctx context.Context, args []string) error {
+	if err := loadDotEnv(".env"); err != nil {
+		// Generic message on purpose: godotenv errors embed file
+		// content, which may itself contain secrets. Never log it.
+		log.Print("warning: could not parse .env — continuing with the environment only")
+	}
+	return newServer().Run(ctx, transportFor(args))
+}
+
+// transportFor picks the MCP transport: stdio by default. transportHook
+// is nil in production; tests set it to supply an in-memory transport.
+var transportOverride func() mcp.Transport
+
+func transportFor(args []string) mcp.Transport {
+	if transportOverride != nil {
+		return transportOverride()
+	}
+	return &mcp.StdioTransport{}
+}
+
+// newServer builds the MCP server with all monobank tools wired to a
+// monoapi client configured from the environment. Split out of main so
+// tests can connect an in-memory transport to it.
+func newServer() *mcp.Server {
 	client := monoapi.NewClient(
 		os.Getenv("MONO_TOKEN"),
 		os.Getenv("MONO_BASE_URL"), // optional override, e.g. for tests
@@ -40,10 +69,7 @@ func main() {
 	}, nil)
 
 	tools.Register(server, client)
-
-	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
-		log.Fatal(err)
-	}
+	return server
 }
 
 // loadDotEnv loads key=value pairs from path into the environment,

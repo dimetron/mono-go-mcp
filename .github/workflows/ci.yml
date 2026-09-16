@@ -1,0 +1,150 @@
+name: ci
+
+# PR gate: build, vet, test with a 90% coverage floor, and a
+# govulncheck scan. Coverage is parsed from the Go profile; the gate
+# compares it against MIN_COVERAGE and fails the job below the floor,
+# which blocks merge when the branch protection requires this check.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  MIN_COVERAGE: "90.0" # merge gate: total statement coverage floor
+
+jobs:
+  test:
+    name: Test & coverage gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test with coverage
+        run: go test ./... -count=1 -coverprofile=coverage.out -covermode=atomic
+
+      - name: Enforce coverage floor
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}' | tr -d '%')
+          echo "Total coverage: ${total}% (floor: ${MIN_COVERAGE}%)"
+          if [ -z "$total" ]; then
+            echo "::error::could not parse coverage from coverage.out"
+            exit 1
+          fi
+          awk -v got="$total" -v min="$MIN_COVERAGE" 'BEGIN {
+            if (got+0 < min+0) {
+              printf "FAIL: coverage %.1f%% is below the required %.1f%%\n", got, min
+              exit 1
+            }
+            printf "PASS: coverage %.1f%% meets the %.1f%% floor\n", got, min
+          }'
+
+      - name: Print coverage by package
+        run: go tool cover -func=coverage.out | tail -6
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: coverage
+          path: coverage.out
+
+      - name: Upload to Codecov (badge source)
+        uses: codecov/codecov-action@04b047e8bb82a0c002c8312c1c880fbc6a999d45 # v5
+        with:
+          files: coverage.out
+          fail_ci_if_error: false # badge stays; the gate above already failed
+          token: ${{ secrets.CODECOV_TOKEN }} # public repos work tokenless too
+
+  vuln:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: govulncheck (called vulnerabilities)
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: false
+          check-latest: true
+          output-format: json
+          output-file: vuln.json
+
+      - name: Summarize vulnerabilities (badge data)
+        run: |
+          python3 - <<'PY'
+          import json
+          dec = json.JSONDecoder()
+          s = open('vuln.json').read().strip()
+          idx = 0
+          vulns = {}
+          while idx < len(s):
+              while idx < len(s) and s[idx] in ' \n\t\r':
+                  idx += 1
+              if idx >= len(s):
+                  break
+              try:
+                  obj, end = dec.raw_decode(s, idx)
+              except json.JSONDecodeError:
+                  break
+              if list(obj.keys())[0] == 'finding':
+                  v = obj['finding']
+                  vulns[v['osv']] = v.get('fixed_version', '')
+              idx = end
+          n = len(vulns)
+          status = 'passing' if n == 0 else 'failing'
+          payload = {"schemaVersion": 1,
+                     "label": "govulncheck",
+                     "message": f"{n} vulns" if n else "0 vulns",
+                     "color": "brightgreen" if n == 0 else "red",
+                     "namedLogos": "go"}
+          open('vuln-badge.json', 'w').write(json.dumps(payload))
+          print(f"govulncheck: {n} called vulnerabilities -> {status}")
+          PY
+
+      - name: Publish vuln badge JSON (gh-pages)
+        if: github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@329bcc8f12caed2cefe5a5b80781499a6f3b361b # v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./vuln-badge.json
+          keep_files: false
+          destination_dir: badges
+          publish_branch: gh-pages
+          user_name: github-actions[bot]
+          user_email: actions@github.com
+          commit_message: "Update govulncheck badge"
+
+  gate:
+    name: PR gate
+    needs: [test, vuln]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate
+        run: |
+          if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ] || \
+             [ "${{ contains(needs.*.result, 'cancelled') }}" = "true" ]; then
+            echo "gate failed"
+            exit 1
+          fi
+          echo "all checks passed"

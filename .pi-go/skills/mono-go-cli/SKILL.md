@@ -31,8 +31,11 @@ binaries into `$(go env GOPATH)/bin`).
 
 - Run from the repo root (`/Users/dimetron/p6s/pi-dev/mcp/mono-go-mcp`),
   otherwise `.env` won't be found and personal endpoints are skipped.
-- **All money amounts are integer minimal units** (kopiykas/cents) —
-  divide by 100 for hryvnias. Never present raw values as UAH.
+- **Money in CLI output is already major units** (hryvnias, e.g.
+  `-3640.00`) — the binary converts from raw API integers itself. Never
+  divide displayed amounts again. Raw integer kopiykas appear only in
+  the MCP tools' JSON output (`mono_statement`, `mono_client_info`);
+  divide those by 100 for UAH.
 - `/personal/*` endpoints (`-info`, `-stmt`) are rate-limited to **1 per
   60 s**. The two statement windows are separate calls; the CLI waits
   (`X-Auth-Interval-Expires`, capped at 60 s) and retries once. Don't
