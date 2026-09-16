@@ -38,7 +38,10 @@ import (
 	"github.com/joho/godotenv"
 )
 
-const version = "0.1.0"
+// version is stamped at build time via -X main.version (goreleaser and
+// the Taskfile CLI build); keep it a var or the stamp silently stops
+// working.
+var version = "0.1.0"
 
 // options holds the selected CLI parts and modifiers.
 type options struct {
@@ -80,6 +83,10 @@ func main() {
 	client := monoapi.NewClient(token, os.Getenv("MONO_BASE_URL"))
 	ctx := context.Background()
 
+	// failed counts the selected parts that could not be fetched;
+	// main exits nonzero if any of them failed.
+	failed := 0
+
 	if opts.webhook != "" {
 		if token == "" {
 			log.Fatal("-webhook requires MONO_TOKEN")
@@ -97,6 +104,7 @@ func main() {
 		pairs, err := client.GetCurrencyRates(ctx)
 		if err != nil {
 			log.Printf("currency rates: %v", err)
+			failed++
 		} else {
 			printRates(pairs)
 		}
@@ -106,16 +114,19 @@ func main() {
 		si, err := client.GetBankSync(ctx)
 		if err != nil {
 			log.Printf("bank sync: %v", err)
+			failed++
 		} else {
 			printBankSync(si)
 		}
 	}
 
 	if !opts.info && !opts.stmt {
+		exitIfFailed(failed)
 		return
 	}
 	if token == "" {
 		fmt.Println("\nno MONO_TOKEN — personal parts skipped (set it in the environment or .env)")
+		exitIfFailed(failed)
 		return
 	}
 
@@ -123,18 +134,22 @@ func main() {
 		ci, err := client.GetClientInfo(ctx)
 		if err != nil {
 			log.Printf("client info: %v", err)
+			failed++
 		} else {
 			printClientInfo(ci)
 		}
 	}
 
 	if opts.stmt {
-		now := time.Now()
+		// All UTC: statement timestamps are Unix seconds,
+		// timezone-independent. Mixing local calendar fields with a UTC
+		// location can invert the window in the first hours of the 1st
+		// (now < firstOfThisMonth), hence Now().UTC() for both.
+		now := time.Now().UTC()
 		// Last month: 1st of the previous month .. 1st of this month.
-		// This month: 1st of this month .. now. Both UTC: statement
-		// timestamps are Unix seconds, timezone-independent. Month
-		// windows are at most 31 days, within the API's 2,682,000 s
-		// limit, so no cap is needed.
+		// This month: 1st of this month .. now. Month windows are at
+		// most 31 days, within the API's 2,682,000 s limit, so no cap
+		// is needed.
 		firstOfThisMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 		firstOfLastMonth := firstOfThisMonth.AddDate(0, -1, 0)
 
@@ -143,6 +158,17 @@ func main() {
 
 		thisMonth := fetchStatement(ctx, client, opts.account, firstOfThisMonth, now, opts.noWait)
 		printStatement("this month", firstOfThisMonth, now, thisMonth)
+	}
+
+	exitIfFailed(failed)
+}
+
+// exitIfFailed terminates the process with a nonzero status when some
+// selected parts failed to be fetched. Statement fetches abort earlier
+// via log.Fatalf, so reaching the end means at least one part printed.
+func exitIfFailed(failed int) {
+	if failed > 0 {
+		os.Exit(1)
 	}
 }
 
@@ -193,7 +219,7 @@ func printRates(pairs []monoapi.CurrencyPair) {
 			time.Unix(p.Date, 0).Format("2006-01-02 15:04"),
 		})
 	}
-	printTable([]string{"pair", "sell", "buy", "cross", "updated"}, rows)
+	printTable([]string{"pair", "sell", "buy", "cross", "updated"}, rows, []int{1, 2, 3})
 }
 
 // rateCell returns the printable cell for a rate: fixed precision or
@@ -234,7 +260,7 @@ func printClientInfo(ci *monoapi.ClientInfo) {
 			"jar", j.ID, j.Title, sym(j.CurrencyCode), fmtMoney(j.Balance),
 		})
 	}
-	printTable([]string{"kind", "id", "name", "cur", "balance"}, rows)
+	printTable([]string{"kind", "id", "name", "cur", "balance"}, rows, []int{4})
 }
 
 // printStatement prints one statement window as a transaction table
@@ -261,7 +287,7 @@ func printStatement(label string, from, to time.Time, items monoapi.StatementIte
 			out += -it.Amount
 		}
 	}
-	printTable([]string{"time", "amount", "description", "hold"}, rows)
+	printTable([]string{"time", "amount", "description", "hold"}, rows, []int{1})
 	fmt.Printf("  totals: %d transactions, in %s %s, out %s %s\n",
 		len(items), fmtMoney(in), sym(items[0].CurrencyCode),
 		fmtMoney(out), sym(items[0].CurrencyCode))
@@ -292,10 +318,12 @@ func fmtMoney(v int64) string {
 
 // printTable renders headers and rows as an aligned text table with
 // box-drawing borders and | separators between all cells. rightAlign
-// marks the indexes of right-aligned (numeric) columns; amounts and
-// balances should be right-aligned, text columns left-aligned.
-func printTable(headers []string, rows [][]string) {
-	printTableAlign(headers, rows, []int{1})
+// marks the indexes of right-aligned (numeric) columns; amounts,
+// balances and rates should be right-aligned, text columns
+// left-aligned. Every caller passes its own set: there is no
+// one-size-fits-all numeric column.
+func printTable(headers []string, rows [][]string, rightAlign []int) {
+	printTableAlign(headers, rows, rightAlign)
 }
 
 // printTableAlign is printTable with a custom set of right-aligned
