@@ -72,6 +72,11 @@ jobs:
   vuln:
     name: Vulnerability scan
     runs-on: ubuntu-latest
+    # Job-level override: publishing the badge to gh-pages pushes a
+    # commit, which needs contents:write. Top-level default stays
+    # read-only for the other jobs (least privilege).
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
