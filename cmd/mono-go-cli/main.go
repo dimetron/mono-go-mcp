@@ -15,6 +15,7 @@
 //	-account ID   statement account ("0" = default, or account/jar ID)
 //	-webhook URL  set the webhook URL (POST /personal/webhook)
 //	-no-wait      fail instead of waiting out the 60 s rate limit
+//	-json         print each part as JSON (one document per section)
 //	-version      print version and exit
 //
 // Mind the 60-second rate limit on /personal/* endpoints: the two
@@ -27,6 +28,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -52,6 +54,7 @@ type options struct {
 	account string
 	webhook string
 	noWait  bool
+	json    bool
 }
 
 func main() {
@@ -74,6 +77,7 @@ func run(args []string) int {
 	fs.StringVar(&opts.account, "account", "0", "statement account: \"0\" for default, or an account/jar ID from client info")
 	fs.StringVar(&opts.webhook, "webhook", "", "set the webhook URL that receives statement events (POST /personal/webhook)")
 	fs.BoolVar(&opts.noWait, "no-wait", false, "do not wait out the 60 s personal-endpoint rate limit; fail with 429 instead")
+	fs.BoolVar(&opts.json, "json", false, "print each part as JSON instead of tables (statement windows wrapped with their dates)")
 	fs.BoolVar(&showVersion, "version", false, "print version and exit")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -120,7 +124,7 @@ func run(args []string) int {
 			log.Printf("currency rates: %v", err)
 			failed++
 		} else {
-			printRates(pairs)
+			printRates(pairs, opts.json)
 		}
 	}
 
@@ -130,7 +134,7 @@ func run(args []string) int {
 			log.Printf("bank sync: %v", err)
 			failed++
 		} else {
-			printBankSync(si)
+			printBankSync(si, opts.json)
 		}
 	}
 
@@ -155,7 +159,7 @@ func run(args []string) int {
 			log.Printf("client info: %v", err)
 			failed++
 		} else {
-			printClientInfo(ci)
+			printClientInfo(ci, opts.json)
 		}
 	}
 
@@ -172,19 +176,19 @@ func run(args []string) int {
 		firstOfThisMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 		firstOfLastMonth := firstOfThisMonth.AddDate(0, -1, 0)
 
-		lastMonth, err := fetchStatement(ctx, client, opts.account, firstOfLastMonth, firstOfThisMonth, opts.noWait)
+		lastMonth, err := fetchStatement(ctx, client, opts.account, firstOfLastMonth, firstOfThisMonth, opts.noWait, opts.json)
 		if err != nil {
 			log.Printf("statement: %v", err)
 			return 1
 		}
-		printStatement("last month", firstOfLastMonth, firstOfThisMonth, lastMonth)
+		printStatement("last month", firstOfLastMonth, firstOfThisMonth, lastMonth, opts.json)
 
-		thisMonth, err := fetchStatement(ctx, client, opts.account, firstOfThisMonth, now, opts.noWait)
+		thisMonth, err := fetchStatement(ctx, client, opts.account, firstOfThisMonth, now, opts.noWait, opts.json)
 		if err != nil {
 			log.Printf("statement: %v", err)
 			return 1
 		}
-		printStatement("this month", firstOfThisMonth, now, thisMonth)
+		printStatement("this month", firstOfThisMonth, now, thisMonth, opts.json)
 	}
 
 	return exitIfFailed(failed)
@@ -202,15 +206,18 @@ func exitIfFailed(failed int) int {
 }
 
 // fetchStatement calls GetStatement, waiting out the 60 s rate limit
-// once if the API answers 429 (unless noWait).
-func fetchStatement(ctx context.Context, client *monoapi.Client, account string, from, to time.Time, noWait bool) (monoapi.StatementItems, error) {
+// once if the API answers 429 (unless noWait). Progress messages are
+// suppressed in -json mode to keep stdout parseable.
+func fetchStatement(ctx context.Context, client *monoapi.Client, account string, from, to time.Time, noWait, asJSON bool) (monoapi.StatementItems, error) {
 	items, err := client.GetStatement(ctx, account, from.Unix(), to.Unix())
 	if isRateLimited(err) && !noWait {
 		wait, maxWait := rateLimitReset(err), int(time.Minute.Seconds())
 		if wait <= 0 || wait > maxWait {
 			wait = maxWait
 		}
-		fmt.Printf("\nrate limited; waiting %ds for the 60 s window to reset…\n", wait)
+		if !asJSON {
+			fmt.Printf("\nrate limited; waiting %ds for the 60 s window to reset…\n", wait)
+		}
 		select {
 		case <-time.After(time.Duration(wait) * time.Second):
 		case <-ctx.Done():
@@ -239,8 +246,33 @@ func rateLimitReset(err error) int {
 	return apiErr.RateLimitResetSec
 }
 
-// printRates renders currency rates as a text table.
-func printRates(pairs []monoapi.CurrencyPair) {
+// printJSON writes v as one line of indented-free compact JSON followed
+// by a newline, so several sections form a JSON Lines stream.
+func printJSON(v any) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		log.Printf("json encode: %v", err)
+		return
+	}
+	fmt.Println(string(b))
+}
+
+// statementJSON wraps statement items with their window so two windows
+// remain distinguishable in -json output.
+type statementJSON struct {
+	Label string                 `json:"label"`
+	From  string                 `json:"from"`
+	To    string                 `json:"to"`
+	Items monoapi.StatementItems `json:"items"`
+}
+
+// printRates renders currency rates as a text table, or as JSON with
+// -json.
+func printRates(pairs []monoapi.CurrencyPair, asJSON bool) {
+	if asJSON {
+		printJSON(pairs)
+		return
+	}
 	fmt.Println("\nmono_currency_rates")
 	rows := make([][]string, 0, len(pairs))
 	for _, p := range pairs {
@@ -264,8 +296,13 @@ func rateCell(r float64) string {
 	return fmt.Sprintf("%.4f", r)
 }
 
-// printBankSync prints mono_bank_sync data as a key/value table.
-func printBankSync(si *monoapi.SyncInfo) {
+// printBankSync prints mono_bank_sync data as a key/value table, or as
+// JSON with -json.
+func printBankSync(si *monoapi.SyncInfo, asJSON bool) {
+	if asJSON {
+		printJSON(si)
+		return
+	}
 	fmt.Println("\nmono_bank_sync")
 	printTableAlign(
 		[]string{"field", "value"},
@@ -279,8 +316,12 @@ func printBankSync(si *monoapi.SyncInfo) {
 }
 
 // printClientInfo prints mono_client_info data as a table: one row
-// per account and jar.
-func printClientInfo(ci *monoapi.ClientInfo) {
+// per account and jar — or as JSON with -json.
+func printClientInfo(ci *monoapi.ClientInfo, asJSON bool) {
+	if asJSON {
+		printJSON(ci)
+		return
+	}
 	fmt.Printf("\nmono_client_info — %s (%s)\n", ci.Name, ci.ClientID)
 	rows := make([][]string, 0, len(ci.Accounts)+len(ci.Jars))
 	for _, a := range ci.Accounts {
@@ -297,8 +338,17 @@ func printClientInfo(ci *monoapi.ClientInfo) {
 }
 
 // printStatement prints one statement window as a transaction table
-// with a totals line.
-func printStatement(label string, from, to time.Time, items monoapi.StatementItems) {
+// with a totals line — or as JSON with -json.
+func printStatement(label string, from, to time.Time, items monoapi.StatementItems, asJSON bool) {
+	if asJSON {
+		printJSON(statementJSON{
+			Label: label,
+			From:  from.Format(time.RFC3339),
+			To:    to.Format(time.RFC3339),
+			Items: items,
+		})
+		return
+	}
 	fmt.Printf("\nmono_statement [%s: %s .. %s]\n", label,
 		from.Format(time.DateOnly), to.Format(time.DateOnly))
 	if len(items) == 0 {
