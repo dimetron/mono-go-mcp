@@ -257,10 +257,10 @@ func TestDecodeError(t *testing.T) {
 	}
 }
 
-func TestAtoi(t *testing.T) {
-	for in, want := range map[string]int{"": 0, "7": 7, "42": 42, "12x": 0, "-3": 0, "003": 3} {
-		if got := atoi(in); got != want {
-			t.Errorf("atoi(%q)=%d, want %d", in, got, want)
+func TestResetSeconds(t *testing.T) {
+	for in, want := range map[string]int{"": 0, "7": 7, "42": 42, "12x": 0, "-3": 0, "003": 3, "007": 7} {
+		if got := resetSeconds(in); got != want {
+			t.Errorf("resetSeconds(%q)=%d, want %d", in, got, want)
 		}
 	}
 }

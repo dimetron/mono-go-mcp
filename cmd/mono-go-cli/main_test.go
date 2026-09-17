@@ -111,6 +111,25 @@ func TestRunExplicitInfoWithoutToken(t *testing.T) {
 	}
 }
 
+func TestRunDefaultWithoutTokenSkipsPersonalAndExitsZero(t *testing.T) {
+	// No flags and no MONO_TOKEN: the personal parts are skipped (not an
+	// error), the public parts still work, and the process exits 0.
+	cliEnv(t, "", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/bank/currency" {
+			writeJSONLine(w, []monoapi.CurrencyPair{})
+			return
+		}
+		if r.URL.Path == "/bank/sync" {
+			writeJSONLine(w, monoapi.SyncInfo{ServerKeyId: "kid", ServerPubKey: "pub", ServerTimeMsec: 1})
+			return
+		}
+		http.NotFound(w, r)
+	})
+	if code := run([]string{}); code != 0 {
+		t.Errorf("code=%d, want 0 (default without token must skip personal parts, not fail)", code)
+	}
+}
+
 func TestRunInfoWithTokenSuccessAndFailure(t *testing.T) {
 	// Success.
 	cliEnv(t, "tok", func(w http.ResponseWriter, r *http.Request) {
