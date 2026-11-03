@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,58 +17,27 @@ func newTestServer(t *testing.T, hits *atomic.Int64) *Client {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := hits.Add(1)
-		switch r.URL.Path {
-		case "/personal/client-info":
+		switch {
+		case r.URL.Path == "/personal/client-info":
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(ClientInfo{
 				ClientID: "cli-test",
-				Name:     "hit " + itoa64(n),
+				Name:     "hit " + itoa(n),
+			})
+		case strings.HasPrefix(r.URL.Path, "/personal/statement/"):
+			// Echo the requested "to" in an item description.
+			parts := strings.Split(r.URL.Path, "/")
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(StatementItems{
+				{ID: "tx", Description: "to=" + parts[len(parts)-1]},
 			})
 		default:
-			if strings_HasPrefix(r.URL.Path, "/personal/statement/") {
-				// Echo the requested "to" in an item description.
-				parts := splitPath(r.URL.Path)
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(StatementItems{
-					{ID: "tx", Description: "to=" + parts[len(parts)-1]},
-				})
-				return
-			}
 			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(srv.Close)
 	return NewClient("test-token", srv.URL)
 }
-
-func itoa64(n int64) string {
-	return time.Unix(n, 0).Format("") + // no-op to keep imports honest
-		func() string {
-			s := ""
-			for n > 0 {
-				s = string(rune('0'+n%10)) + s
-				n /= 10
-			}
-			return s
-		}()
-}
-
-func splitPath(p string) []string {
-	var out []string
-	cur := ""
-	for _, r := range p {
-		if r == '/' {
-			out = append(out, cur)
-			cur = ""
-			continue
-		}
-		cur += string(r)
-	}
-	out = append(out, cur)
-	return out
-}
-
-func strings_HasPrefix(s, pre string) bool { return len(s) >= len(pre) && s[:len(pre)] == pre }
 
 func TestClientInfoCached(t *testing.T) {
 	var hits atomic.Int64

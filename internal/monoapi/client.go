@@ -7,11 +7,13 @@
 package monoapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -96,7 +98,7 @@ func (c *Client) do(ctx context.Context, method, endpoint string, body, out any)
 		if err != nil {
 			return fmt.Errorf("marshal request: %w", err)
 		}
-		rd = strings.NewReader(string(b))
+		rd = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+endpoint, rd)
 	if err != nil {
@@ -128,7 +130,7 @@ func (c *Client) do(ctx context.Context, method, endpoint string, body, out any)
 			Body:       sanitizeBody(string(data)),
 		}
 		if s := resp.Header.Get("X-Auth-Interval-Expires"); s != "" {
-			if n := atoi(s); n > 0 {
+			if n := resetSeconds(s); n > 0 {
 				apiErr.RateLimitResetSec = n
 			}
 		}
@@ -143,13 +145,13 @@ func (c *Client) do(ctx context.Context, method, endpoint string, body, out any)
 	return nil
 }
 
-func atoi(s string) int {
-	n := 0
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return 0
-		}
-		n = n*10 + int(r-'0')
+// resetSeconds parses the X-Auth-Interval-Expires header value, an
+// unsigned integer count of seconds. Malformed values (empty, non-digit,
+// negative) yield 0.
+func resetSeconds(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0
 	}
 	return n
 }

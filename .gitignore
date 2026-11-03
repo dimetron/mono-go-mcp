@@ -7,6 +7,9 @@
 bin/
 dist/
 .task/
+# stray root-level binaries from a bare `go build ./cmd/...`
+/mono-go-mcp
+/mono-go-cli
 
 # local-only tool state
 .pi-go/cache/

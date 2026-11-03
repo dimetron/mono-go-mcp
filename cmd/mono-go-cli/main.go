@@ -29,6 +29,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -82,6 +83,12 @@ func run(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
+	// explicit records which flags were actually passed on the command
+	// line, so the "no flags = run everything" default below can be told
+	// apart from an explicit -info/-stmt request.
+	explicit := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 
 	if showVersion {
 		fmt.Println("mono-go-cli", version)
@@ -145,7 +152,7 @@ func run(args []string) int {
 		// An explicit -info/-stmt request that cannot run is an
 		// error; the default no-flags invocation merely skips the
 		// personal parts.
-		if opts.info || opts.stmt {
+		if explicit["info"] || explicit["stmt"] {
 			log.Print("no MONO_TOKEN — required for -info/-stmt (set it in the environment or .env)")
 			return 1
 		}
@@ -233,14 +240,17 @@ func fetchStatement(ctx context.Context, client *monoapi.Client, account string,
 
 // isRateLimited reports whether err is a monobank 429.
 func isRateLimited(err error) bool {
-	apiErr, ok := err.(*monoapi.APIError)
-	return ok && apiErr.IsRateLimited()
+	var apiErr *monoapi.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.IsRateLimited()
 }
 
 // rateLimitReset returns the server-provided reset seconds, or 0.
 func rateLimitReset(err error) int {
-	apiErr, ok := err.(*monoapi.APIError)
-	if !ok {
+	var apiErr *monoapi.APIError
+	if !errors.As(err, &apiErr) {
 		return 0
 	}
 	return apiErr.RateLimitResetSec
